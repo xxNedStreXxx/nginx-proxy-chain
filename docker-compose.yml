@@ -1,0 +1,225 @@
+version: '3.8'
+
+networks:
+  chain_net:
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+services:
+  app:
+    image: containous/whoami:v1.5.0
+    container_name: app
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+        reservations:
+          memory: 32M
+    networks:
+      chain_net:
+        ipv4_address: 172.20.0.10
+        aliases:
+          - app
+
+  nginx1:
+    image: nginx:alpine
+    container_name: nginx1
+    hostname: nginx1
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+        reservations:
+          memory: 32M
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      chain_net:
+        ipv4_address: 172.20.0.11
+        aliases:
+          - nginx1
+
+  nginx1-exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    container_name: nginx1-exporter
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.10'
+          memory: 32M
+    command: ["-nginx.scrape-uri=http://nginx1:8090/metrics"]
+    networks:
+      chain_net:
+        ipv4_address: 172.20.0.21
+        aliases:
+          - nginx1-exporter
+
+  nginx2:
+    image: nginx:alpine
+    container_name: nginx2
+    hostname: nginx2
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+        reservations:
+          memory: 32M
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      chain_net:
+        ipv4_address: 172.20.0.12
+        aliases:
+          - nginx2
+
+  nginx2-exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    container_name: nginx2-exporter
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.10'
+          memory: 32M
+    command: ["-nginx.scrape-uri=http://nginx2:8090/metrics"]
+    networks:
+      chain_net:
+        ipv4_address: 172.20.0.22
+        aliases:
+          - nginx2-exporter
+
+  nginx3:
+    image: nginx:alpine
+    container_name: nginx3
+    hostname: nginx3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+        reservations:
+          memory: 32M
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      chain_net:
+        ipv4_address: 172.20.0.13
+        aliases:
+          - nginx3
+
+  nginx3-exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    container_name: nginx3-exporter
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.10'
+          memory: 32M
+    command: ["-nginx.scrape-uri=http://nginx3:8090/metrics"]
+    networks:
+      chain_net:
+        ipv4_address: 172.20.0.23
+        aliases:
+          - nginx3-exporter
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: promtail
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.15'
+          memory: 48M
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+    command: ["-config.file=/etc/promtail/config.yml"]
+    networks:
+      chain_net:
+        ipv4_address: 172.20.0.30
+        aliases:
+          - promtail
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      chain_net:
+        ipv4_address: 172.20.0.90
+        aliases:
+          - prometheus
+
+  loki:
+    image: grafana/loki:2.9.10
+    container_name: loki
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+    command: ["-config.file=/etc/loki/local-config.yaml", "-server.http-listen-address=0.0.0.0"]
+    networks:
+      chain_net:
+        ipv4_address: 172.20.0.55
+        aliases:
+          - loki
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: grafana
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    volumes:
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3000:3000"
+    networks:
+      chain_net:
+        ipv4_address: 172.20.0.110
+        aliases:
+          - grafana
+
+  curl_client:
+    image: curlimages/curl:latest
+    container_name: curl_client
+    entrypoint: ["tail", "-f", "/dev/null"]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.10'
+          memory: 32M
+        reservations:
+          memory: 16M
+    networks:
+      chain_net:
+        ipv4_address: 172.20.0.50
+        aliases:
+          - curl_client
