@@ -221,6 +221,74 @@ jobs:
               options:
                 path: /etc/grafana/provisioning/dashboards/nginx_chain_dashboard.json
           EOF
+          cat << 'EOF' > grafana/dashboards/nginx_chain_dashboard.json
+          {
+            "annotations": { "list": [] },
+            "editable": true,
+            "fiscalYearStartMonth": 0,
+            "graphTooltip": 1,
+            "id": 1,
+            "links": [],
+            "liveNow": true,
+            "panels": [
+              {
+                "title": "Proxy Chain Traffic (RPS)",
+                "type": "timeseries",
+                "id": 1,
+                "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+                "datasource": { "type": "prometheus", "uid": "Prometheus" },
+                "targets": [
+                  {
+                    "expr": "sum(rate(nginx_exporter_requests_total[10s])) by (instance)",
+                    "legendFormat": "{{instance}}",
+                    "refId": "A"
+                  }
+                ]
+              },
+              {
+                "title": "HTTP Status Distribution (Loop Detection Tracking)",
+                "type": "barchart",
+                "id": 2,
+                "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+                "datasource": { "type": "prometheus", "uid": "Prometheus" },
+                "targets": [
+                  {
+                    "expr": "sum(rate(nginx_exporter_http_responses_total[30s])) by (status)",
+                    "legendFormat": "Status {{status}}",
+                    "refId": "B"
+                  }
+                ]
+              },
+              {
+                "title": "Distributed Tracing Logs Stream (Loki)",
+                "type": "logs",
+                "id": 3,
+                "gridPos": { "h": 10, "w": 24, "x": 0, "y": 8 },
+                "datasource": { "type": "loki", "uid": "Loki" },
+                "targets": [
+                  {
+                    "expr": "{app_name=~\"nginx.*\"}",
+                    "refId": "C"
+                  }
+                ],
+                "options": {
+                  "showLabels": true,
+                  "wrapLogMessage": true,
+                  "enableLogDetails": true
+                }
+              }
+            ],
+            "refresh": "2s",
+            "schemaVersion": 38,
+            "style": "dark",
+            "tags": ["nginx", "observability", "ci-test"],
+            "time": { "from": "now-5m", "to": "now" },
+            "timepicker": { "refresh_intervals": ["2s", "5s", "10s"] },
+            "timezone": "browser",
+            "title": "Nginx Proxy Chain Telemetry",
+            "version": 1
+          }
+          EOF
           
           # --- 5. ГЕНЕРАЦИЯ DOCKER COMPOSE ---
           cat << 'EOF' > docker-compose.yml
