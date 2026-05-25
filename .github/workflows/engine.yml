@@ -1,0 +1,527 @@
+name: Nginx Proxy Chain Verification
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Code
+        uses: actions/checkout@v4
+
+      - name: Generate Infrastructure and Start
+        run: |
+          mkdir -p nginx
+          
+           # --- 1. ГЕНЕРАЦИЯ NGINX CONFIG ---
+          cat << 'EOF' > nginx/nginx.conf
+          events { 
+              worker_connections 1024; 
+          }
+
+          http {
+              # Однострочный формат лога, который мы исправили ранее
+              log_format chain_json_log escape=json '{"time_iso8601":"$time_iso8601","server_port":"$server_port","hostname":"$hostname","remote_addr":"$remote_addr","request_method":"$request_method","request_uri":"$request_uri","status":"$status","request_time":"$request_time","upstream_connect_time":"$upstream_connect_time","upstream_response_time":"$upstream_response_time","xff":"$http_x_forwarded_for","proxy_loop":"$http_x_proxy_loop","request_id":"$request_id"}';
+
+              access_log /var/log/nginx/access.log chain_json_log;
+
+              map $http_x_next_hop $next_destination {
+                  ""                  "app";
+                                    ~^([^\s]+)\s+.*$    $1;
+                  ~^([^\s]+)$         $1;
+                  default             "app";
+              }
+
+              map $http_x_next_hop $remaining_chain {
+                  ~^[^\s]+\s+(.*)$    $1;
+                  default             "";
+              }
+
+              map "$http_x_proxy_loop:$hostname" $loop_detected {
+                  ~node-nginx1.*:nginx1  1;
+                  ~node-nginx2.*:nginx2  1;
+                  ~node-nginx3.*:nginx3  1;
+                  default                0;
+              }
+
+              map $http_x_proxy_loop $updated_loop {
+                  ""         "node-$hostname";
+                  default    "$http_x_proxy_loop, node-$hostname";
+              }
+
+              server {
+                  listen 8090;
+                  server_name localhost;
+                  location /metrics {
+                      stub_status;
+                      access_log off;
+                      allow 172.20.0.0/24;
+                      deny all;
+                  }
+              }
+
+              map $next_destination $routing_suffix {
+                  "nginx1"   "nginx1";
+                  "nginx2"   "nginx2";
+                  "nginx3"   "nginx3";
+                  "app"      "app";
+                  default    "app";
+              }
+
+              map $loop_detected $final_routing_target {
+                  1          "loop";
+                  default    $routing_suffix;
+              }
+
+              server {
+                  listen 80;
+                  
+                  proxy_set_header Host              $http_host;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_http_version 1.1;
+
+                  error_page 508 = @loop_error;
+                  error_page 421 = @external_to_nginx1;
+                  error_page 422 = @external_to_nginx2;
+                  error_page 423 = @external_to_nginx3;
+                  error_page 424 = @external_to_app;
+
+                  location / {
+                      rewrite ^(.*)$ /$final_routing_target last;
+                  }
+
+                  location /loop     { return 508; }
+                  location /nginx1   { return 421; }
+                  location /nginx2   { return 422; }
+                  location /nginx3   { return 423; }
+                  location /app      { return 424; }
+
+                  location @loop_error         { return 508 "Error: Proxy loop detected!\n"; }
+                  location @external_to_nginx1 { proxy_set_header X-Forwarded-For $remote_addr; proxy_set_header X-Proxy-Loop $updated_loop; proxy_set_header X-Next-Hop $remaining_chain; rewrite ^ $request_uri break; proxy_pass http://nginx1:8080; }
+                  location @external_to_nginx2 { proxy_set_header X-Forwarded-For $remote_addr; proxy_set_header X-Proxy-Loop $updated_loop; proxy_set_header X-Next-Hop $remaining_chain; rewrite ^ $request_uri break; proxy_pass http://nginx2:8080; }
+                  location @external_to_nginx3 { proxy_set_header X-Forwarded-For $remote_addr; proxy_set_header X-Proxy-Loop $updated_loop; proxy_set_header X-Next-Hop $remaining_chain; rewrite ^ $request_uri break; proxy_pass http://nginx3:8080; }
+                  location @external_to_app    { proxy_set_header X-Forwarded-For $remote_addr; proxy_set_header X-Proxy-Loop $updated_loop; proxy_set_header X-Next-Hop $remaining_chain; rewrite ^ $request_uri break; proxy_pass http://app:80; }
+              }
+
+              server {
+                  listen 8080;
+                  
+                  proxy_set_header Host              $http_host;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_http_version 1.1;
+
+                  error_page 508 = @loop_error;
+                  error_page 421 = @internal_to_nginx1;
+                  error_page 422 = @internal_to_nginx2;
+                  error_page 423 = @internal_to_nginx3;
+                  error_page 424 = @internal_to_app;
+
+                  location / {
+                      rewrite ^(.*)$ /$final_routing_target last;
+                  }
+
+                  location /loop     { return 508; }
+                  location /nginx1   { return 421; }
+                  location /nginx2   { return 422; }
+                  location /nginx3   { return 423; }
+                  location /app      { return 424; }
+
+                  location @loop_error         { return 508 "Error: Proxy loop detected!\n"; }
+                  location @internal_to_nginx1 { proxy_set_header X-Forwarded-For "$http_x_forwarded_for, $remote_addr"; proxy_set_header X-Proxy-Loop $updated_loop; proxy_set_header X-Next-Hop $remaining_chain; rewrite ^ $request_uri break; proxy_pass http://nginx1:8080; }
+                  location @internal_to_nginx2 { proxy_set_header X-Forwarded-For "$http_x_forwarded_for, $remote_addr"; proxy_set_header X-Proxy-Loop $updated_loop; proxy_set_header X-Next-Hop $remaining_chain; rewrite ^ $request_uri break; proxy_pass http://nginx2:8080; }
+                  location @internal_to_nginx3 { proxy_set_header X-Forwarded-For "$http_x_forwarded_for, $remote_addr"; proxy_set_header X-Proxy-Loop $updated_loop; proxy_set_header X-Next-Hop $remaining_chain; rewrite ^ $request_uri break; proxy_pass http://nginx3:8080; }
+                  location @internal_to_app    { proxy_set_header X-Forwarded-For "$http_x_forwarded_for, $remote_addr"; proxy_set_header X-Proxy-Loop $updated_loop; proxy_set_header X-Next-Hop $remaining_chain; rewrite ^ $request_uri break; proxy_pass http://app:80; }
+              }
+          }
+          EOF
+
+          # --- 2. ГЕНЕРАЦИЯ PROMTAIL CONFIG ---
+          cat << 'EOF' > promtail-config.yml
+          server:
+            http_listen_port: 9080
+            grpc_listen_port: 0
+          positions:
+            filename: /tmp/positions.yaml
+          clients:
+            - url: http://loki:3100/loki/api/v1/push
+          scrape_configs:
+            - job_name: docker-logs
+              docker_sd_configs:
+                - host: unix:///var/run/docker.sock
+                  refresh_interval: 5s
+              relabel_configs:
+                # Фильтруем только наши Nginx контейнеры
+                - source_labels: [__meta_docker_container_name]
+                  regex: /(nginx1|nginx2|nginx3)
+                  target_label: container
+                - source_labels: [__meta_docker_container_name]
+                  target_label: app_name
+              pipeline_stages:
+                - json:
+                    expressions:
+                      timestamp: time_iso8601
+                      node_host: hostname
+                      http_status: status
+                      request_id: request_id
+                - labels:
+                    node_host:
+                    http_status:
+          EOF
+
+          # --- 3. ГЕНЕРАЦИЯ PROMETHEUS CONFIG ---
+          cat << 'EOF' > prometheus.yml
+          global:
+            scrape_interval: 2s
+          scrape_configs:
+            - job_name: 'nginx-chain-metrics'
+              static_configs:
+                - targets:
+                    - 'nginx1-exporter:9113'
+                    - 'nginx2-exporter:9113'
+                    - 'nginx3-exporter:9113'
+                  labels:
+                    env: 'ci-test'
+          EOF
+
+          # --- 4. ГЕНЕРАЦИЯ GRAFANA PROVISIONING ---
+          mkdir -p grafana/datasources
+          cat << 'EOF' > grafana/datasources/ds.yaml
+          apiVersion: 1
+          datasources:
+            - name: Prometheus
+              type: prometheus
+              access: proxy
+              url: http://prometheus:9090
+              isDefault: true
+              editable: false
+            - name: Loki
+              type: loki
+              access: proxy
+              url: http://loki:3100
+              editable: false
+          EOF
+
+          # --- 5. ГЕНЕРАЦИЯ DOCKER COMPOSE ---
+          cat << 'EOF' > docker-compose.yml
+          version: '3.8'
+
+          networks:
+            chain_net:
+              ipam:
+                config:
+                  - subnet: 172.20.0.0/24
+
+          services:
+            app:
+              image: containous/whoami:v1.5.0
+              container_name: app
+              restart: unless-stopped
+              deploy:
+                resources:
+                  limits:
+                    cpus: '0.25'
+                    memory: 64M
+                  reservations:
+                    memory: 32M
+              networks:
+                chain_net:
+                  ipv4_address: 172.20.0.10
+                  aliases:
+                    - app
+
+            nginx1:
+              image: nginx:alpine
+              container_name: nginx1
+              hostname: nginx1
+              restart: unless-stopped
+              deploy:
+                resources:
+                  limits:
+                    cpus: '0.25'
+                    memory: 64M
+                  reservations:
+                    memory: 32M
+              volumes:
+                - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+                - nginx_logs:/var/log/nginx
+              networks:
+                chain_net:
+                  ipv4_address: 172.20.0.11
+                  aliases:
+                    - nginx1
+
+            nginx1-exporter:
+              image: nginx/nginx-prometheus-exporter:latest
+              container_name: nginx1-exporter
+              restart: unless-stopped
+              deploy:
+                resources:
+                  limits:
+                    cpus: '0.10'
+                    memory: 32M
+              command: ["-nginx.scrape-uri=http://nginx1:8090/metrics"]
+              networks:
+                chain_net:
+                  ipv4_address: 172.20.0.21
+                  aliases:
+                    - nginx1-exporter
+            nginx2:
+              image: nginx:alpine
+              container_name: nginx2
+              hostname: nginx2
+              restart: unless-stopped
+              deploy:
+                resources:
+                  limits:
+                    cpus: '0.25'
+                    memory: 64M
+                  reservations:
+                    memory: 32M
+              volumes:
+                - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+                - nginx_logs:/var/log/nginx
+              networks:
+                chain_net:
+                  ipv4_address: 172.20.0.12
+                  aliases:
+                    - nginx2
+
+            nginx2-exporter:
+              image: nginx/nginx-prometheus-exporter:latest
+              container_name: nginx2-exporter
+              restart: unless-stopped
+              deploy:
+                resources:
+                  limits:
+                    cpus: '0.10'
+                    memory: 32M
+              command: ["-nginx.scrape-uri=http://nginx2:8090/metrics"]
+              networks:
+                chain_net:
+                  ipv4_address: 172.20.0.22
+                  aliases:
+                    - nginx2-exporter
+
+            nginx3:
+              image: nginx:alpine
+              container_name: nginx3
+              hostname: nginx3
+              restart: unless-stopped
+              deploy:
+                resources:
+                  limits:
+                    cpus: '0.25'
+                    memory: 64M
+                  reservations:
+                    memory: 32M
+              volumes:
+                - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+                - nginx_logs:/var/log/nginx
+              networks:
+                chain_net:
+                  ipv4_address: 172.20.0.13
+                  aliases:
+                    - nginx3
+
+            nginx3-exporter:
+              image: nginx/nginx-prometheus-exporter:latest
+              container_name: nginx3-exporter
+              restart: unless-stopped
+              deploy:
+                resources:
+                  limits:
+                    cpus: '0.10'
+                    memory: 32M
+              command: ["-nginx.scrape-uri=http://nginx3:8090/metrics"]
+              networks:
+                chain_net:
+                  ipv4_address: 172.20.0.23
+                  aliases:
+                    - nginx3-exporter
+
+            promtail:
+              image: grafana/promtail:latest
+              container_name: promtail
+              restart: unless-stopped
+              deploy:
+                resources:
+                  limits:
+                    cpus: '0.15'
+                    memory: 48M
+              volumes:
+                # ИСПРАВЛЕНИЕ: Удаляем монтирование папок логов и пробрасываем сокет Docker
+                - /var/run/docker.sock:/var/run/docker.sock:ro
+                - ./promtail-config.yml:/etc/promtail/config.yml:ro
+              command: ["-config.file=/etc/promtail/config.yml"]
+              networks:
+                chain_net:
+                  ipv4_address: 172.20.0.30
+                  aliases:
+                    - promtail
+
+
+            prometheus:
+              image: prom/prometheus:latest
+              container_name: prometheus
+              restart: unless-stopped
+              deploy:
+                resources:
+                  limits:
+                    cpus: '0.25'
+                    memory: 128M
+              volumes:
+                - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+              networks:
+                chain_net:
+                  ipv4_address: 172.20.0.90
+                  aliases:
+                    - prometheus
+
+            loki:
+              image: grafana/loki:2.9.10
+              container_name: loki
+              restart: unless-stopped
+              deploy:
+                resources:
+                  limits:
+                    cpus: '0.25'
+                    memory: 128M
+              command: ["-config.file=/etc/loki/local-config.yaml", "-server.http-listen-address=0.0.0.0"]
+              networks:
+                chain_net:
+                  ipv4_address: 172.20.0.55
+                  aliases:
+                    - loki
+
+            grafana:
+              image: grafana/grafana-oss:latest
+              container_name: grafana
+              restart: unless-stopped
+              deploy:
+                resources:
+                  limits:
+                    cpus: '0.25'
+                    memory: 128M
+              environment:
+                - GF_AUTH_ANONYMOUS_ENABLED=true
+                - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+              volumes:
+                - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+              ports:
+                - "3000:3000"
+              networks:
+                chain_net:
+                  ipv4_address: 172.20.0.110
+                  aliases:
+                    - grafana
+            curl_client:
+              image: curlimages/curl:latest
+              container_name: curl_client
+              entrypoint: ["tail", "-f", "/dev/null"]
+              restart: unless-stopped
+              deploy:
+                resources:
+                  limits:
+                    cpus: '0.10'
+                    memory: 32M
+                  reservations:
+                    memory: 16M
+              networks:
+                chain_net:
+                  ipv4_address: 172.20.0.50
+                  aliases:
+                    - curl_client
+
+          volumes:
+            nginx_logs:
+          EOF
+          # ИСПРАВЛЕНИЕ: Создаем пустую папку и файл логов с правами записи, 
+          # чтобы Promtail не ругался на отсутствие файла при старте
+          mkdir -p nginx_logs
+          touch nginx_logs/access.log
+          chmod -R 777 nginx_logs
+
+          docker compose up -d
+          sleep 5
+
+
+      - name: Run Test 1
+        run: |
+          TRACE_ID_1="trace-test-1-$(date +%s)"
+          R1=$(docker exec curl_client curl -s -H "X-Request-ID: $TRACE_ID_1" http://nginx1 | grep -i "X-Forwarded-For" | tr -d '\r')
+          echo "Т1: '$R1' [TraceID: $TRACE_ID_1]"
+          if [ "$R1" != "X-Forwarded-For: 172.20.0.50" ]; then
+            echo "=== ДИАГНОСТИКА: Тест 1 упал ==="
+            docker compose logs nginx1
+            exit 1
+          fi
+
+      - name: Run Test 2
+        run: |
+          TRACE_ID_2="trace-test-2-$(date +%s)"
+          R2=$(docker exec curl_client curl -s -H "X-Request-ID: $TRACE_ID_2" -H "X-Next-Hop: nginx2 nginx3" http://nginx1 | grep -i "X-Forwarded-For" | tr -d '\r')
+          echo "Т2: '$R2' [TraceID: $TRACE_ID_2]"
+          if [ "$R2" != "X-Forwarded-For: 172.20.0.50, 172.20.0.11, 172.20.0.12" ]; then
+            echo "=== ДИАГНОСТИКА: Тест 2 упал ==="
+            exit 1
+          fi
+      - name: Run Test 3
+        run: |
+          TRACE_ID_3="trace-test-3-$(date +%s)"
+          R3=$(docker exec curl_client curl -s -H "X-Request-ID: $TRACE_ID_3" -H "X-Forwarded-For: 9.9.9.9" -H "X-Next-Hop: nginx3" http://nginx2 | grep -i "X-Forwarded-For" | tr -d '\r')
+          echo "Т3: '$R3' [TraceID: $TRACE_ID_3]"
+          if [ "$R3" != "X-Forwarded-For: 172.20.0.50, 172.20.0.12" ]; then
+            echo "=== ДИАГНОСТИКА: Тест 3 упал ==="
+            exit 1
+          fi
+
+      - name: Run Test 4
+        run: |
+          TRACE_ID_4="trace-test-4-$(date +%s)"
+          R4=$(docker exec curl_client curl -i -s -H "X-Request-ID: $TRACE_ID_4" -H "X-Next-Hop: nginx2 nginx1" http://nginx1 | grep "HTTP" | tr -d '\r')
+          echo "Т4: '$R4' [TraceID: $TRACE_ID_4]"
+          if ! echo "$R4" | grep -q "508"; then
+            echo "=== ДИАГНОСТИКА: Тест 4 упал ==="
+            docker compose logs nginx1
+            exit 1
+          fi
+
+      - name: Verify Observability Collection
+        run: |
+          echo "=== Проверка сбора данных системой мониторинга ==="
+          
+          echo "Ожидаем готовности Grafana Loki..."
+          # Используем нативное имя сервиса 'loki' вместо IP. 
+          # Флаг --retry-connrefused плавно ждет поднятия сети.
+          LOKI_STATUS=$(docker exec curl_client curl -s -o /dev/null --retry 10 --retry-delay 2 --retry-connrefused -w "%{http_code}" http://loki:3100/ready || echo "000")
+          echo "Статус Loki после ожидания: $LOKI_STATUS"
+          
+          echo "Ожидаем подключения экспортеров в Prometheus..."
+          PROM_TARGETS=0
+          # Опрашиваем Prometheus по его имени 'prometheus'
+          PROM_API_STATUS=$(docker exec curl_client curl -s -o /dev/null --retry 10 --retry-delay 2 --retry-connrefused -w "%{http_code}" http://prometheus:9090/api/v1/targets || echo "000")
+          
+          if [ "$PROM_API_STATUS" = "200" ]; then
+            PROM_TARGETS=$(docker exec curl_client curl -s http://prometheus:9090/api/v1/targets | grep -o '"health":"up"' | wc -l || echo "0")
+          fi
+          
+          echo "=== ИТОГИ ТЕСТА МОНИТОРИНГА ==="
+          echo "Финальный статус Loki: $LOKI_STATUS"
+          echo "Финальное число нод в Prometheus: $PROM_TARGETS"
+          
+          if [ "$LOKI_STATUS" != "200" ] || [ "$PROM_TARGETS" -lt "3" ]; then
+            echo "=== ДИАГНОСТИКА: Система Observability не смогла вовремя инициализироваться ==="
+            docker compose logs --tail 20 loki prometheus promtail
+            exit 1
+          fi
+          echo "Система мониторинга полностью развернута и собирает телеметрию!"
+
+      - name: Clean Environment
+        if: always()
+        run: docker compose down
+
