@@ -184,27 +184,31 @@ services:
         aliases:
           - loki
 
-  grafana:
-    image: grafana/grafana-oss:latest
-    container_name: grafana
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '0.25'
-          memory: 128M
-    environment:
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
-    volumes:
-      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
-    ports:
-      - "3000:3000"
-    networks:
-      chain_net:
-        ipv4_address: 172.20.0.110
-        aliases:
-          - grafana
+            # --- ВИЗУАЛИЗАЦИЯ И ДАШБОРДЫ ---
+            grafana:
+              image: grafana/grafana-oss:latest
+              container_name: grafana
+              restart: unless-stopped
+              deploy:
+                resources:
+                  limits:
+                    cpus: '0.25'
+                    memory: 128M
+              environment:
+                - GF_AUTH_ANONYMOUS_ENABLED=true
+                - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+              volumes:
+                - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+                # НАДО ДОБАВИТЬ ЭТУ СТРОКУ: пробрасываем папку с дашбордами
+                - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+              ports:
+                - "3000:3000"
+              networks:
+                chain_net:
+                  ipv4_address: 172.20.0.110
+                  aliases:
+                    - grafana
+
 
   curl_client:
     image: curlimages/curl:latest
