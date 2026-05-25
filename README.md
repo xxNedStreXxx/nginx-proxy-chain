@@ -58,3 +58,8 @@ docker compose up -d
 * **Grafana UI:** `http://localhost:3000` (Вход свободный, встроен дашборд **"Nginx Proxy Chain Telemetry"** с графиками RPS, распределения HTTP-статусов и живым стримом Trace-логов).
 * **Панель Prometheus:** `http://localhost:9090`
 * **API базы логов Loki:** `http://localhost:3100/ready`
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Copyright (c) 2026 xxNedStreXxx
