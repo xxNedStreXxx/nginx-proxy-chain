@@ -1,0 +1,6 @@
+---
+- name: Deploy Nginx Proxy Chain
+  hosts: proxy_nodes
+  become: yes
+  roles:
+    - nginx_proxy
