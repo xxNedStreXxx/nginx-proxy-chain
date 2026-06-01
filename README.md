@@ -67,11 +67,11 @@ ansible/
 ### Пример использования:
 
 1. Подготовьте ваш файл инвентаря `inventory.ini` со списком целевых серверов и их переменных (порты, хосты следующих узлов):
-   ```ini
-   [proxy_nodes]
-   nginx1 ansible_host=192.168.1.11 proxy_port=8081 next_proxy_host=192.168.1.12 next_proxy_port=8082
-   nginx2 ansible_host=192.168.1.12 proxy_port=8082 next_proxy_host=app_server  next_proxy_port=80
-   ```
+```ini
+[proxy_nodes]
+nginx1 ansible_host=192.168.1.11 proxy_port=8081 next_proxy_host=192.168.1.12 next_proxy_port=8082
+nginx2 ansible_host=192.168.1.12 proxy_port=8082 next_proxy_host=app_server  next_proxy_port=80
+```
 
 2. Запустите деплой всей цепочки одной командой:
    ```bash
