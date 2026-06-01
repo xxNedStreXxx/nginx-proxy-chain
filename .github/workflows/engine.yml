@@ -6,6 +6,8 @@ name: Nginx Proxy Chain Verification
 on:
   push:
     branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 env:
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
