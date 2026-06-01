@@ -534,8 +534,8 @@ jobs:
           mkdir -p nginx_logs
           touch nginx_logs/access.log
           chmod -R 777 nginx_logs
-
-          docker compose up -d
+          docker compose down -v
+          docker compose up -d --build
           sleep 5
 
 
